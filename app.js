@@ -3,7 +3,7 @@ const $ = s => document.querySelector(s);
 const icon = name => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const escapeHTML = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const registry = new Map();
-let state = { ids: [], seams: [], direction: 'vertical', crop: {start:0,end:0}, bars:{start:0,end:0}, demo:false };
+let state = { ids: [], seams: [], direction: 'vertical', crop: {start:0,end:0}, bars:{start:0,end:0} };
 let history = [], future = [], zoom = 1, busy = false, worker = null, generation = 0, toastTimer, editor = null, editorBitmaps = [], exportUrls = [];
 const clone = o => JSON.parse(JSON.stringify(o));
 const images = () => state.ids.map(id => registry.get(id));
@@ -38,7 +38,7 @@ function render() {
   $('#imageList').innerHTML=ims.map((im,i)=>`<div class="image-card" draggable="true" data-id="${im.id}"><button class="thumb-button" data-sort="${im.id}" aria-label="截图 ${i+1}，长按拖动排序"><img class="image-thumb" src="${im.preview}" alt="${escapeHTML(im.name)}" draggable="false"><span class="number">${i+1}</span></button><div class="reorder-buttons"><button data-move="-1" data-owner="${im.id}" aria-label="上移截图 ${i+1}" ${i===0?'disabled':''}>${icon('up')}</button><button data-move="1" data-owner="${im.id}" aria-label="下移截图 ${i+1}" ${i===ims.length-1?'disabled':''}>${icon('down')}</button></div><button class="remove-image" data-delete="${im.id}" aria-label="移除截图 ${i+1}">${icon('close')}</button></div>`).join('');
   for(const d of ['vertical','horizontal']){$('#'+d).classList.toggle('selected',state.direction===d);$('#'+d).setAttribute('aria-pressed',state.direction===d);$('#'+d).disabled=busy;}
   $('#undo').disabled=!history.length||busy;$('#redo').disabled=!future.length||busy;
-  for(const el of document.querySelectorAll('#imageList button,#demo,#add,#upload,#nextStitch,#nextExport')){if(busy)el.disabled=true;else if(!el.dataset.move)el.disabled=false;}
+  for(const el of document.querySelectorAll('#imageList button,#add,#upload,#resume,#nextStitch,#nextExport')){if(busy)el.disabled=true;else if(!el.dataset.move)el.disabled=false;}
   $('#pendingButton').hidden=!pending;$('#pendingCount').textContent=pending;$('#pendingButton').setAttribute('aria-label',`待确认接缝 ${pending} 处`);
   if(pageStep===2){if(inlineEdit)renderInline();else renderPreview(plan);}
   if(pageStep===3)renderExportThumb(plan);
@@ -196,10 +196,10 @@ async function registerFile(file, name=file.name) {
 }
 async function importFiles(files) {
   if(busy)return;homeView=false;const list=Array.from(files);if(!list.length)return;
-  if(list.length+(state.demo?0:state.ids.length)>30){toast('每个任务最多 30 张截图');return;}
+  if(list.length+state.ids.length>30){toast('每个任务最多 30 张截图');return;}
   busy=true;render();const added=[],errors=[];
   try{
-    let expected=state.demo?null:images()[0];
+    let expected=images()[0];
     for(const file of list){
       if(file.size>25*1024*1024){errors.push(`${file.name}：文件大于 25 MB`);continue;}
       if(!/image\/(png|jpeg|webp)/i.test(file.type)&&! /\.(png|jpe?g|webp)$/i.test(file.name)){errors.push(`${file.name}：暂不支持此格式`);continue;}
@@ -209,7 +209,7 @@ async function importFiles(files) {
         expected=expected||im;added.push(im.id);
       }catch(e){errors.push(`${file.name}：${e.message||'解码失败'}`);}
     }
-    if(added.length){checkpoint();if(state.demo){state.ids=[];state.seams=[];state.crop={start:0,end:0};state.bars={start:0,end:0};}if(state.demo)state.trims={};state.demo=false;state.ids.push(...added);syncSeams();toast(`已添加 ${added.length} 张截图`);}
+    if(added.length){checkpoint();state.ids.push(...added);syncSeams();toast(`已添加 ${added.length} 张截图`);}
   }finally{busy=false;$('#fileInput').value='';render();}
   if(errors.length)info('部分图片未导入',`<p>其余图片已保留，可继续拼接。</p><ul>${errors.map(s=>`<li>${escapeHTML(s)}</li>`).join('')}</ul>`);
 }
@@ -355,45 +355,13 @@ async function generateExport(){
   }catch(e){$('#exportNotice').hidden=false;$('#exportNotice').textContent=`${completed?`已完成 ${completed} 段，其余`:'导出'}失败：${e.message}。可缩小尺寸或改为分段后重试。`;}
   finally{busy=false;controls.forEach(c=>c.disabled=false);generate.innerHTML=icon('download')+'重新生成';generate.disabled=false;render();}
 }
-function rounded(ctx,x,y,w,h,r,fill){ctx.fillStyle=fill;ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill();}
-async function loadDemo(){
-  if(busy)return;busy=true;render();
-  try{
-    const long=canvas(600,2180),c=long.getContext('2d');c.fillStyle='#fafbf7';c.fillRect(0,0,600,2180);
-    c.fillStyle='#74866c';c.font='18px "Segoe UI", "Microsoft YaHei"';c.fillText('SLOW DAYS  /  生活里的小事',43,56);
-    c.fillStyle='#334d38';c.font='bold 34px "Microsoft YaHei"';c.fillText('把日子过成喜欢的样子',43,112);
-    c.fillStyle='#98a28e';c.font='17px "Microsoft YaHei"';c.fillText('周末灵感手记   ·   VOL. 028',43,150);
-    rounded(c,40,187,520,312,14,'#e1e9d1');
-    // Original vector illustration, drawn locally: a window, a plant and a warm cup.
-    rounded(c,79,210,280,236,8,'#f6f7eb');rounded(c,90,220,258,206,4,'#c2d5b2');
-    c.fillStyle='#b1c49d';c.beginPath();c.arc(180,365,94,Math.PI,0);c.fill();c.fillStyle='#cfdfbd';c.beginPath();c.arc(289,369,100,Math.PI,0);c.fill();
-    c.fillStyle='#f4f4e4';c.fillRect(215,220,9,206);c.fillRect(90,312,258,8);c.fillStyle='#d1c7a4';c.fillRect(40,447,520,52);
-    rounded(c,409,389,62,64,9,'#869e69');c.strokeStyle='#74945c';c.lineWidth=5;c.beginPath();c.moveTo(439,400);c.lineTo(430,292);c.stroke();
-    [[414,327,-.6],[447,306,.6],[413,366,-.6],[455,350,.6]].forEach(([x,y,r])=>{c.save();c.translate(x,y);c.rotate(r);c.fillStyle='#8dab73';c.beginPath();c.ellipse(0,0,23,10,0,0,Math.PI*2);c.fill();c.restore();});
-    rounded(c,276,413,67,44,9,'#faf8ee');c.strokeStyle='#faf8ee';c.lineWidth=7;c.beginPath();c.arc(345,432,12,-Math.PI/2,Math.PI/2);c.stroke();
-    c.fillStyle='#8a997a';c.font='14px "Microsoft YaHei"';c.fillText('慢一点，也没关系。',42,533);
-    const sections=[
-      ['01','给自己一段留白','不赶时间的早晨，打开窗，','让光和风一起进来。','一杯咖啡，一页书，就是很好的开始。'],
-      ['02','去附近走一走','沿着树荫散步，不急着抵达。','记下路边新开的花，','也记下那些让你停下来的瞬间。'],
-      ['03','收集微小的快乐','洗好的床单，刚出炉的面包。','把手机放远一点，','把注意力留给眼前的人和事。'],
-      ['04','把喜欢的留住','生活不需要每一刻都很精彩。','那些平常、安静的小事，','也值得被好好记录。']
-    ];
-    sections.forEach((s,i)=>{const y=601+i*343;c.fillStyle='#b2c29c';c.font='18px Georgia';c.fillText(s[0],43,y);c.fillStyle='#3d553d';c.font='bold 27px "Microsoft YaHei"';c.fillText(s[1],43,y+46);c.fillStyle='#85917c';c.font='20px "Microsoft YaHei"';s.slice(2).forEach((line,j)=>c.fillText(line,43,y+94+j*39));c.strokeStyle='#e1e7d8';c.lineWidth=1;c.beginPath();c.moveTo(43,y+258);c.lineTo(557,y+258);c.stroke();});
-    c.fillStyle='#8ea27e';c.font='16px "Microsoft YaHei"';c.fillText('让每一个普通日子，都有一点绿意。',43,2083);
-    const positions=[0,460,930,1460],lengths=[720,720,720,720],added=[];
-    for(let i=0;i<4;i++){const shot=canvas(600,lengths[i]);shot.getContext('2d').drawImage(long,0,positions[i],600,lengths[i],0,0,600,lengths[i]);const blob=await new Promise(r=>shot.toBlob(r,'image/png'));const im=await registerFile(blob,`示例截图-${i+1}.png`);added.push(im.id);shot.width=1;}
-    checkpoint();state={ids:added,direction:'vertical',demo:true,crop:{start:0,end:0},bars:{start:0,end:0},seams:[]};syncSeams();
-    lastAnalysisKey='';
-    zoom=1;
-  }finally{busy=false;render();}
-}
 function bind(){
   $('#autoBars').onchange=()=>{if(!busy)applyAutoBars();};
   // Lock browser zoom while retaining one-finger scrolling and crop dragging.
   for(const type of ['gesturestart','gesturechange','gestureend'])document.addEventListener(type,e=>e.preventDefault(),{passive:false});
   document.addEventListener('touchmove',e=>{if(e.touches.length>1)e.preventDefault();},{passive:false});
   document.addEventListener('wheel',e=>{if(e.ctrlKey)e.preventDefault();},{passive:false});
-  $('#upload').onclick=$('#add').onclick=()=>$('#fileInput').click();$('#fileInput').onchange=e=>importFiles(e.target.files);$('#demo').onclick=loadDemo;
+  $('#upload').onclick=$('#add').onclick=()=>$('#fileInput').click();$('#fileInput').onchange=e=>importFiles(e.target.files);
   $('#resume').onclick=()=>{homeView=false;render();};$('#previousSelect').onclick=()=>{homeView=true;render();};$('#previousStitch').onclick=()=>{cancelInline();setStep(1);};$('#previousExport').onclick=()=>setStep(2);$('#nextStitch').onclick=nextStitch;$('#nextExport').onclick=()=>{if(inlineEdit&&!saveInline())return;openExport();};$('#back').onclick=()=>{cancelInline();setStep(Math.max(1,pageStep-1));};
   $('#vertical').onclick=()=>changeDirection('vertical');$('#horizontal').onclick=()=>changeDirection('horizontal');$('#cancel').onclick=cancelAnalysis;
   $('#undo').onclick=()=>{if(!history.length||busy)return;future.push(clone(state));state=history.pop();clearExport();render();};

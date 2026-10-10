@@ -4,7 +4,7 @@
 
 ## 网页运行依赖
 
-当前版本没有第三方 JavaScript、CSS、字体、图片或 WASM 运行依赖。页面使用原生 HTML、CSS、JavaScript、Canvas、Web Worker 和浏览器文件 API；图标为本地 SVG，示例插画由 Canvas 本地绘制。
+当前版本没有第三方 JavaScript、CSS、字体、图片或 WASM 运行依赖。页面使用原生 HTML、CSS、JavaScript、Canvas、Web Worker 和浏览器文件 API；图标为本地 SVG。
 
 ## 算法设计参考
 
