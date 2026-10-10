@@ -257,7 +257,7 @@ async function analyze() {
           }
           if(token!==generation)return;checkpoint();syncSeams();let automatic=0;
           for(const pair of verified){const s=state.seams.find(s=>s.beforeId===pair.a&&s.afterId===pair.b);if(!s||s.manual)continue;const r=pair.result;
-            Object.assign(s,{autoBase:{end:trimFor(s.beforeId).end,start:trimFor(s.afterId).start},suggested:r.overlap,status:r.status,confirmed:r.status==='high',overlap:r.status==='high'?r.overlap:0,cut:r.status==='high'?Math.round(r.overlap/2):0});
+            Object.assign(s,{autoBase:{end:trimFor(s.beforeId).end,start:trimFor(s.afterId).start},autoOverlap:r.status==='high'?r.overlap:0,suggested:r.overlap,status:r.status,confirmed:r.status==='high',overlap:r.status==='high'?r.overlap:0,cut:r.status==='high'?Math.round(r.overlap/2):0});
             try{currentPlan();if(s.confirmed)automatic++;}catch{Object.assign(s,{confirmed:false,overlap:0,cut:0,status:'uncertain'});}
           }
           lastAnalysisKey=analysisKey();busy=false;$('#progressArea').hidden=true;render();toast(automatic?'已自动拼接 '+automatic+' 处':'请拖动接缝手动对齐');
@@ -441,8 +441,7 @@ function restoreEditHistory(redo){const e=inlineEdit,from=redo?e.redo:e.undo,to=
 function startInline(index,event){
  const anchor=captureViewAnchor(event);
  if(busy)return;const ids=[...state.ids];
- inlineEdit={index,ids,trims:Object.fromEntries(ids.map(id=>[id,{...trimFor(id)}])),seams:state.seams.map((s,i)=>({...s,overlap:s.confirmed?s.overlap:(i===index?s.suggested||0:0)})),touched:new Set(),undo:[],redo:[],activeId:null,dragging:false};
- if(state.seams[index])inlineEdit.touched.add(index);
+ inlineEdit={index,ids,trims:Object.fromEntries(ids.map(id=>[id,{...trimFor(id)}])),seams:state.seams.map(s=>({...s,overlap:s.confirmed?s.overlap:0})),resetBases:state.seams.map(s=>({end:s.autoBase?.end??trimFor(s.beforeId).end,start:s.autoBase?.start??trimFor(s.afterId).start,overlap:s.autoOverlap??(s.status==='high'?s.suggested||0:0)})),touched:new Set(),undo:[],redo:[],activeId:null,dragging:false};
  $('#inlineToolbar').hidden=false;$('#pendingButton').hidden=true;$('#historyActions').hidden=true;renderInline();
  restoreViewAnchor(anchor);
 }
@@ -454,7 +453,15 @@ function renderInline(){
  e.origins=origins;const min=Math.min(0,...origins);e.shift=-min;
  const total=Math.max(...ims.map((im,i)=>origins[i]+(v?im.height:im.width)))-min;
  const track=$('#previewTrack');track.className='preview-track direct-edit'+(v?'':' horizontal');track.style.cssText=`position:relative;width:${(v?cross:total)*r}px;height:${(v?total:cross)*r}px`;
- track.innerHTML=ims.map((im,i)=>{const length=v?im.height:im.width,t=e.trims[im.id];return `<div class="source-frame source-${i%2} ${e.activeId===im.id?'active-source':''} ${e.dragging&&e.activeId===im.id?'cropping':''}" data-frame="${im.id}" data-hd-source="${im.id}" data-hd-ratio="${r}" style="width:${im.width*r}px;height:${im.height*r}px;--trim-start:${t.start/length*100}%;--trim-end:${t.end/length*100}%;${v?'top':'left'}:${(origins[i]-min)*r}px"><img draggable="false" src="${im.preview}" alt="原图 ${i+1}"><span class="source-number">${i+1}</span><div class="direct-shade shade-start" style="${v?'height':'width'}:${t.start*r}px"></div><div class="direct-shade shade-end" style="${v?'height':'width'}:${t.end*r}px"></div></div>`;}).join('')+ims.map((im,i)=>{const length=v?im.height:im.width,t=e.trims[im.id];return ['start','end'].map(side=>`<button class="direct-handle trim-${side} color-${i%2}" data-edge="${side}" data-source="${im.id}" style="${v?'top':'left'}:${(origins[i]-min+(side==='start'?t.start:length-t.end))*r}px" aria-label="截图 ${i+1} ${side==='start'?'起始':'末尾'}裁切边缘"><i></i></button>`).join('');}).join('')+e.seams.map((s,i)=>`<button class="join-drag" data-join="${i}" style="${v?'top':'left'}:${(origins[i+1]-min+e.trims[ims[i+1].id].start+s.overlap/2)*r}px" aria-label="拖动调整接缝 ${i+1}"><svg viewBox="0 0 24 24"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/></svg></button><button class="join-reset" data-reset="${i}" style="${v?'top':'left'}:${(origins[i+1]-min+e.trims[ims[i+1].id].start+s.overlap/2)*r+52}px" aria-label="恢复接缝 ${i+1} 自动拼接">${icon('reset')}</button>`).join('');
+ track.innerHTML=ims.map((im,i)=>{const length=v?im.height:im.width,t=e.trims[im.id];return `<div class="source-frame source-${i%2} ${e.activeId===im.id?'active-source':''} ${e.dragging&&e.activeId===im.id?'cropping':''}" data-frame="${im.id}" data-hd-source="${im.id}" data-hd-ratio="${r}" style="width:${im.width*r}px;height:${im.height*r}px;--trim-start:${t.start/length*100}%;--trim-end:${t.end/length*100}%;${v?'top':'left'}:${(origins[i]-min)*r}px"><img draggable="false" src="${im.preview}" alt="原图 ${i+1}"><span class="source-number">${i+1}</span><div class="direct-shade shade-start" style="${v?'height':'width'}:${t.start*r}px"></div><div class="direct-shade shade-end" style="${v?'height':'width'}:${t.end*r}px"></div></div>`;}).join('')+ims.map((im,i)=>{const length=v?im.height:im.width,t=e.trims[im.id];return ['start','end'].map(side=>`<button class="direct-handle trim-${side} color-${i%2}" data-edge="${side}" data-source="${im.id}" style="${v?'top':'left'}:${(origins[i]-min+(side==='start'?t.start:length-t.end))*r}px" aria-label="截图 ${i+1} ${side==='start'?'起始':'末尾'}裁切边缘"><i></i></button>`).join('');}).join('')+e.seams.map((s,i)=>`<button class="join-drag" data-join="${i}" style="${v?'top':'left'}:${(origins[i+1]-min+e.trims[ims[i+1].id].start+s.overlap/2)*r}px" aria-label="拖动调整接缝 ${i+1}"><svg viewBox="0 0 24 24"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/></svg></button><button class="join-reset" data-reset="${i}" ${inlineSeamChanged(i)?'':'hidden'} style="${v?'top':'left'}:${(origins[i+1]-min+e.trims[ims[i+1].id].start+s.overlap/2)*r+52}px" aria-label="恢复接缝 ${i+1} 自动拼接">${icon('reset')}</button>`).join('');
+ const active=ims.find(im=>im.id===e.activeId);
+ if(active){
+  const i=ims.indexOf(active),t=e.trims[active.id],length=v?active.height:active.width;
+  const start=e.dragging?0:t.start,end=e.dragging?0:t.end;
+  const frame=document.createElement('div');frame.className=`source-outline color-${i%2}`;frame.setAttribute('aria-hidden','true');
+  frame.style.cssText=`left:${v?0:(origins[i]-min+start)*r}px;top:${v?(origins[i]-min+start)*r:0}px;width:${(v?active.width:length-start-end)*r}px;height:${(v?length-start-end:active.height)*r}px`;
+  track.append(frame);
+ }
  scheduleHD();
 }
 function cancelInline(){const anchor=captureViewAnchor();inlineEdit=null;$('#inlineToolbar').hidden=true;$('#previewTrack').style.cssText='';if(pageStep===2){renderPreview();restoreViewAnchor(anchor);}}
@@ -469,19 +476,31 @@ function changeInlineEdge(id,side,value){
  const i=e.ids.indexOf(id),seamIndex=side==='start'?i-1:i;
  if(e.seams[seamIndex]){e.seams[seamIndex].overlap-=delta;e.touched.add(seamIndex);}
 }
+function inlineSeamChanged(index){
+ const e=inlineEdit,s=e?.seams[index],base=e?.resetBases[index];if(!s||!base)return false;
+ return s.overlap!==base.overlap||e.trims[s.beforeId].end!==base.end||e.trims[s.afterId].start!==base.start;
+}
+function resetInlineSeam(index){
+ if(!inlineSeamChanged(index))return;
+ pushEditHistory();const e=inlineEdit,s=e.seams[index],base=e.resetBases[index];
+ changeInlineEdge(s.beforeId,'end',base.end);changeInlineEdge(s.afterId,'start',base.start);
+ s.overlap=base.overlap;e.touched.add(index);renderInline();toast('已恢复此处自动拼接和裁切边缘');
+}
 function bindInline(){
  $('#cancelInline').onclick=()=>{cancelInline();render();};$('#saveInline').onclick=saveInline;
  $('#editUndo').onclick=()=>restoreEditHistory(false);$('#editRedo').onclick=()=>restoreEditHistory(true);
- $('#previewTrack').addEventListener('click',ev=>{const reset=ev.target.closest('[data-reset]');if(!reset||!inlineEdit)return;pushEditHistory();const e=inlineEdit,i=Number(reset.dataset.reset),s=e.seams[i],base=s.autoBase||{start:0,end:0};s.overlap=Math.max(0,(s.suggested||0)-(e.trims[s.beforeId].end-base.end)-(e.trims[s.afterId].start-base.start));e.touched.add(i);renderInline();});
+ $('#previewTrack').addEventListener('click',ev=>{const button=ev.target.closest('[data-reset]');if(!button||!inlineEdit)return;resetInlineSeam(Number(button.dataset.reset));});
 
  let drag=null;const viewport=$('#viewport');
  viewport.addEventListener('scroll',scheduleHD,{passive:true});
- viewport.addEventListener('pointerdown',ev=>{const h=ev.target.closest('[data-edge],[data-join]');if(!h||!inlineEdit)return;ev.preventDefault();const v=state.direction==='vertical';pushEditHistory();inlineEdit.activeId=h.dataset.source||null;inlineEdit.dragging=!!h.dataset.edge;drag={pointer:ev.pointerId,start:v?ev.clientY:ev.clientX,edge:h.dataset.edge,id:h.dataset.source,join:Number(h.dataset.join),seams:clone(inlineEdit.seams),trims:clone(inlineEdit.trims),touched:new Set(inlineEdit.touched)};viewport.setPointerCapture(ev.pointerId);renderInline();});
- viewport.addEventListener('pointermove',ev=>{if(!drag||!inlineEdit)return;ev.preventDefault();const e=inlineEdit,v=state.direction==='vertical',delta=((v?ev.clientY:ev.clientX)-drag.start)/e.ratio;
+ viewport.addEventListener('pointerdown',ev=>{const h=ev.target.closest('[data-edge],[data-join]');if(!h||!inlineEdit||drag)return;ev.preventDefault();const v=state.direction==='vertical';pushEditHistory();inlineEdit.activeId=h.dataset.source||null;inlineEdit.dragging=!!h.dataset.edge;drag={pointer:ev.pointerId,start:v?ev.clientY:ev.clientX,edge:h.dataset.edge,id:h.dataset.source,join:Number(h.dataset.join),seams:clone(inlineEdit.seams),trims:clone(inlineEdit.trims),touched:new Set(inlineEdit.touched)};viewport.setPointerCapture(ev.pointerId);renderInline();});
+ viewport.addEventListener('pointermove',ev=>{if(!drag||!inlineEdit||ev.pointerId!==drag.pointer)return;ev.preventDefault();const e=inlineEdit,v=state.direction==='vertical',delta=((v?ev.clientY:ev.clientX)-drag.start)/e.ratio;
  e.trims=clone(drag.trims);e.seams=clone(drag.seams);
  if(drag.edge)changeInlineEdge(drag.id,drag.edge,drag.trims[drag.id][drag.edge]+(drag.edge==='start'?delta:-delta));else {e.seams[drag.join].overlap=drag.seams[drag.join].overlap-delta;e.touched.add(drag.join);}
  renderInline();});
- viewport.addEventListener('pointerup',()=>{if(inlineEdit){inlineEdit.dragging=false;renderInline();}drag=null;});viewport.addEventListener('pointercancel',()=>{if(drag&&inlineEdit){inlineEdit.trims=drag.trims;inlineEdit.seams=drag.seams;inlineEdit.touched=drag.touched;inlineEdit.dragging=false;inlineEdit.undo.pop();renderInline();}drag=null;});
+ // Ordinary button releases must keep their DOM target alive for the click.
+ viewport.addEventListener('pointerup',ev=>{if(!drag||ev.pointerId!==drag.pointer)return;drag=null;if(inlineEdit){inlineEdit.dragging=false;renderInline();}});
+ viewport.addEventListener('pointercancel',ev=>{if(!drag||ev.pointerId!==drag.pointer)return;if(inlineEdit){inlineEdit.trims=drag.trims;inlineEdit.seams=drag.seams;inlineEdit.touched=drag.touched;inlineEdit.dragging=false;inlineEdit.undo.pop();renderInline();}drag=null;});
  viewport.addEventListener('keydown',ev=>{const h=ev.target.closest('[data-edge],[data-join]');if(!h||!inlineEdit||!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(ev.key))return;ev.preventDefault();pushEditHistory();inlineEdit.activeId=h.dataset.source||null;const amount=(ev.key==='ArrowDown'||ev.key==='ArrowRight'?1:-1)*(ev.shiftKey?10:1);if(h.dataset.edge){changeInlineEdge(h.dataset.source,h.dataset.edge,inlineEdit.trims[h.dataset.source][h.dataset.edge]+(h.dataset.edge==='start'?amount:-amount));}else {const i=Number(h.dataset.join);inlineEdit.seams[i].overlap-=amount;inlineEdit.touched.add(i);}const selector=h.dataset.edge?`[data-source="${h.dataset.source}"][data-edge="${h.dataset.edge}"]`:`[data-join="${h.dataset.join}"]`;renderInline();$(selector)?.focus({preventScroll:true});});
 }
 bind();render();
