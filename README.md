@@ -100,3 +100,14 @@ node --test tests/core.test.cjs
 仓库通过 GitHub Pages 发布 `main` 分支根目录，`.nojekyll` 使站点按静态资源提供，无需构建。后续提交推送至 `main` 后，GitHub Pages 会更新站点。
 
 在仓库 **Settings → Pages → Build and deployment** 中，选择 **Deploy from a branch**、`main`、`/ (root)`。在线地址为 <https://arrow36.github.io/SewShot/>。
+
+## 主屏幕安装与图标
+
+在 iPhone Safari 中打开在线地址，选择「分享 → 添加到主屏幕」。从主屏幕启动时使用独立网页 App 模式。Android Chrome 和支持安装的桌面浏览器读取 `manifest.webmanifest`，安装范围限定于 `/SewShot/`。
+
+- 网站品牌和 SVG favicon：`icon.svg`（横向缝线设计）。
+- PNG favicon：`icons/favicon-v1.png`（32×32）。
+- iPhone 主屏幕：`icons/apple-touch-icon-v1.png`（180×180、不透明 PNG）。
+- Android／桌面安装：`icons/app-icon-192-v1.png`、`icons/app-icon-512-v1.png`。
+
+更换图标时先更新 `icon.svg`，再重新导出这些 PNG；采用新的版本化文件名并同步 HTML 和 Manifest 引用，以避免旧缓存。iPhone 已添加的图标需移除后用 Safari 重新添加。安装配置不增加离线缓存；当前选中的截图仍仅保存在本次会话中。

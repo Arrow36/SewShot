@@ -1,1 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="20" fill="#234e3d"/><path d="M49 14C22 9 10 22 16 40s37 11 33-26Z" fill="#c9e6a8"/><path d="M17 51 39 25m-12 13-1-12" stroke="#234e3d" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+ <rect width="128" height="128" rx="32" fill="#e7f0db"/>
+ <path d="M96 53V34a9 9 0 0 0-9-9H41a9 9 0 0 0-9 9v19M32 75v19a9 9 0 0 0 9 9h46a9 9 0 0 0 9-9V75" stroke="#426c50" stroke-width="4" stroke-linecap="round"/>
+
+ <!-- The pointed end is concealed under the screenshot. -->
+ <path d="M77 64 105 60c5-.7 8 1 8 4s-3 4.7-8 4Z" fill="#426c50"/>
+ <path d="M73 57h22v14H73Z" fill="#e7f0db"/>
+ <path d="M25 64h9m9 0h9m9 0h9m9 0h9" stroke="#426c50" stroke-width="4" stroke-linecap="round"/>
+ <path d="M104 64h4" stroke="#e7f0db" stroke-width="2.5" stroke-linecap="round"/>
+ <path d="M106 64c13 0 13 10 7 17s-5 13 0 17" stroke="#7fa15e" stroke-width="2.5" stroke-linecap="round"/>
+</svg>
