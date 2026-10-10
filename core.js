@@ -1,5 +1,67 @@
 (function (root) {
   'use strict';
+  // Detect bounded, shared browser chrome; never infer a crop from a blank page.
+  function detectBars(samples) {
+    const median = values => [...values].sort((a,b)=>a-b)[Math.floor(values.length/2)];
+    const pixel = (im,y,x) => im.pixels[y*im.cross+x];
+    const edge = (im,y) => median([.008,.015,.985,.992].map(x=>pixel(im,y,Math.min(im.cross-1,Math.floor(im.cross*x)))));
+    const bases = samples.map(im=>median(Array.from({length:8},(_,i)=>edge(im,i))));
+    const result = samples.map((im,i)=>{
+      const limit=Math.floor(im.length*.23),base=bases[i],shared=bases.filter(b=>Math.abs(b-base)<5).length>=2;
+      let top=0,bottom=0;
+      const run=(reverse)=>{
+        let misses=0;
+        for(let n=0;n<=limit;n++){
+          const y=reverse?im.length-1-n:n;
+          if(Math.abs(edge(im,y)-base)>9)misses++;else misses=0;
+          if(misses===3)return n-2;
+        }
+        return 0;
+      };
+      const hasControls=(from,to)=>{
+        let details=0;
+        for(let y=from;y<to;y+=3)for(let x=6;x<im.cross-6;x+=3)if(Math.abs(pixel(im,y,x)-base)>28)details++;
+        return details>=24;
+      };
+      if(shared){
+        const n=run(false);
+        if(n>=im.length*.035&&hasControls(0,n))top=n;
+        if(top){const n=run(true);if(n>=im.length*.025&&hasControls(im.length-n,im.length))bottom=n;}
+      }
+      return {start:top,end:bottom,sticky:0};
+    });
+    // A sticky page header is cropped only if its entire band also appears
+    // inside an earlier screenshot, with text detail and a full-width separator.
+    samples.forEach((im,i)=>{
+      const start=result[i].start;if(!start||!i)return;
+      const w=im.cross,from=start+4,base=median(Array.from({length:w-8},(_,x)=>pixel(im,from,x+4)));
+      for(let end=start+Math.max(32,Math.round(im.length*.018));end<start+im.length*.085;end++){
+        let border=0;
+        for(let x=4;x<w-4;x++)if(Math.abs(pixel(im,end,x)-base)>18)border++;
+        if(border/(w-8)<.9)continue;
+        let detail=0;
+        for(let y=from;y<end-2;y+=5)for(let x=6;x<w-6;x+=4)if(Math.abs(pixel(im,y,x)-base)>35)detail++;
+        if(detail<20)continue;
+        const height=end-from;
+        let best=Infinity;
+        for(let j=Math.max(0,i-1);j<i;j++){
+          const prev=samples[j];if(prev.cross!==w)continue;
+          for(let offset=result[j].start+20;offset<prev.length-result[j].end-height;offset++){
+            let error=0,count=0;
+            for(let y=0;y<height;y+=6)for(let x=4;x<w-4;x+=4){error+=Math.abs(pixel(im,from+y,x)-pixel(prev,offset+y,x));count++;}
+            best=Math.min(best,error/count);
+          }
+        }
+        if(best<2){
+          let boundary=end;
+          while(boundary<end+8&&Math.abs(median(Array.from({length:w-8},(_,x)=>pixel(im,boundary,x+4)))-base)>9)boundary++;
+          result[i].sticky=boundary-start;result[i].start=boundary;
+        }
+        break;
+      }
+    });
+    return result;
+  }
   function match(a, b) {
     const w = a.cross, max = Math.min(a.length, b.length) - 3;
     if (a.cross !== b.cross || max < 12) return { overlap: 0, status: 'unmatched', score: 0 };
@@ -49,7 +111,7 @@
     const best=scores[0],next=scores.find(s=>Math.abs(s.n-best.n)>3),gap=next?next.error-best.error:100;
     const enoughDetail=best.count>=100;
     const high=enoughDetail ? best.error<7&&best.bad<.06&&gap>3&&best.correlation>.94 : best.rows>=8&&best.error<1&&best.denseError<.5&&best.bad<.005&&gap>12&&best.correlation>.995;
-    return {overlap:best.n,status:high?'high':'uncertain',score:Math.max(0,Math.round(100-best.error*3)),error:best.error,gap};
+    return {overlap:best.n,status:high?'high':'uncertain',score:Math.max(0,Math.round(100-best.error*3)),error:best.error,gap,correlation:best.correlation,bad:best.bad};
   }
   function sequence(ids, pairs) {
     const next = new Map(), previous = new Map();
@@ -101,7 +163,7 @@
     }).filter(s => s.length > 0);
     return { width: vertical ? cross : length, height: vertical ? length : cross, length, cross, segments: clipped };
   }
-  const api = { match, refine, sequence, plan };
+  const api = { match, refine, sequence, plan, detectBars };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.StitchCore = api;
 })(typeof self !== 'undefined' ? self : globalThis);

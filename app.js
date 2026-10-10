@@ -24,7 +24,7 @@ function setStep(n){if(busy)return;pageStep=n;render();}
 function render() {
   syncSeams();
   const retained=new Set([state,...history,...future].flatMap(s=>s.ids));
-  for(const [id,im] of registry)if(!retained.has(id)){URL.revokeObjectURL(im.preview);registry.delete(id);}
+  for(const [id,im] of registry)if(!retained.has(id)){URL.revokeObjectURL(im.preview);const entry=hdBitmaps.get(id);if(entry){entry.promise.then(closeBitmap).catch(()=>{});hdBitmaps.delete(id);}registry.delete(id);}
   if(!state.ids.length)pageStep=1;
   const ims=images(),plan=currentPlan(),pending=state.seams.filter(s=>!s.confirmed).length;
   $('#selectScreen').hidden=pageStep!==1;$('#stitchScreen').hidden=pageStep!==2;$('#exportScreen').hidden=pageStep!==3;
@@ -34,6 +34,7 @@ function render() {
   document.querySelectorAll('.step-indicator span').forEach((el,i)=>{el.classList.toggle('active',i===pageStep-1);if(i===pageStep-1)el.setAttribute('aria-current','step');else el.removeAttribute('aria-current');});
   $('#welcome').hidden=!!ims.length&&!homeView;$('#collection').hidden=!ims.length||homeView;$('#selectFooter').hidden=!ims.length||homeView;$('#resume').hidden=!ims.length||!homeView;
   $('#imageCount').textContent=ims.length;
+  $('#autoBars').disabled=busy||state.direction!=='vertical';
   $('#imageList').innerHTML=ims.map((im,i)=>`<div class="image-card" draggable="true" data-id="${im.id}"><button class="thumb-button" data-sort="${im.id}" aria-label="截图 ${i+1}，长按拖动排序"><img class="image-thumb" src="${im.preview}" alt="${escapeHTML(im.name)}" draggable="false"><span class="number">${i+1}</span></button><div class="reorder-buttons"><button data-move="-1" data-owner="${im.id}" aria-label="上移截图 ${i+1}" ${i===0?'disabled':''}>${icon('up')}</button><button data-move="1" data-owner="${im.id}" aria-label="下移截图 ${i+1}" ${i===ims.length-1?'disabled':''}>${icon('down')}</button></div><button class="remove-image" data-delete="${im.id}" aria-label="移除截图 ${i+1}">${icon('close')}</button></div>`).join('');
   for(const d of ['vertical','horizontal']){$('#'+d).classList.toggle('selected',state.direction===d);$('#'+d).setAttribute('aria-pressed',state.direction===d);$('#'+d).disabled=busy;}
   $('#undo').disabled=!history.length||busy;$('#redo').disabled=!future.length||busy;
@@ -48,8 +49,44 @@ function renderPreview(plan=currentPlan()) {
   track.innerHTML=plan.segments.map((seg,i)=>{
     const im=registry.get(seg.imageId),sourceIndex=state.ids.indexOf(seg.imageId),seam=sourceIndex?state.seams[sourceIndex-1]:null;
     const w=vertical?crossSize:seg.length*ratio,h=vertical?seg.length*ratio:crossSize;
-    return `<div class="preview-piece" style="width:${w}px;height:${h}px"><button class="preview-crop" data-image="${im.id}" aria-label="编辑截图 ${sourceIndex+1}"><img src="${im.preview}" alt="截图 ${sourceIndex+1}" style="width:${im.width*ratio}px;height:${im.height*ratio}px;${vertical?'top':'left'}:${-seg.start*ratio}px"></button>${i>0&&seam?`<button class="seam-marker ${seam.confirmed?'':'pending'}" data-seam="${sourceIndex-1}" aria-label="检查接缝 ${sourceIndex}"><span></span></button>`:''}</div>`;
+    return `<div class="preview-piece" style="width:${w}px;height:${h}px"><button class="preview-crop" data-hd-source="${im.id}" data-hd-start="${seg.start}" data-hd-ratio="${ratio}" data-image="${im.id}" aria-label="编辑截图 ${sourceIndex+1}"><img src="${im.preview}" alt="截图 ${sourceIndex+1}" style="width:${im.width*ratio}px;height:${im.height*ratio}px;${vertical?'top':'left'}:${-seg.start*ratio}px"></button>${i>0&&seam?`<button class="seam-marker ${seam.confirmed?'':'pending'}" data-seam="${sourceIndex-1}" aria-label="检查接缝 ${sourceIndex}"><span></span></button>`:''}</div>`;
   }).join('');
+  scheduleHD();
+}
+let cropOriginalUrl=null;
+let hdFrame=0,hdVersion=0;
+const hdBitmaps=new Map();
+function scheduleHD(){
+  hdVersion++;if(hdFrame)return;
+  hdFrame=requestAnimationFrame(()=>{hdFrame=0;paintHD(hdVersion);});
+}
+async function hdBitmap(id){
+  let entry=hdBitmaps.get(id);
+  if(!entry){entry={used:0,promise:decode(registry.get(id).file)};hdBitmaps.set(id,entry);entry.bitmap=await entry.promise;}
+  entry.used=performance.now();return entry.bitmap||await entry.promise;
+}
+async function paintHD(version){
+  const viewport=$('#viewport'),rect=viewport.getBoundingClientRect(),v=state.direction==='vertical',dpr=Math.min(3,window.devicePixelRatio||1),visible=[];
+  if(pageStep!==2)return;
+  for(const frame of document.querySelectorAll('[data-hd-source]')){
+    const bounds=frame.getBoundingClientRect(),x=Math.max(0,rect.left-bounds.left-24),y=Math.max(0,rect.top-bounds.top-24),right=Math.min(bounds.width,rect.right-bounds.left+24),bottom=Math.min(bounds.height,rect.bottom-bounds.top+24);
+    if(right<=x||bottom<=y){const tile=frame.querySelector('.hd-tile');if(tile){tile.width=tile.height=1;tile.remove();}continue;}
+    visible.push({frame,x,y,width:right-x,height:bottom-y});
+  }
+  for(const area of visible){
+    try{
+      const {frame,x,y,width,height}=area,id=frame.dataset.hdSource,bitmap=await hdBitmap(id);
+      if(version!==hdVersion||!frame.isConnected)return;
+      let tile=frame.querySelector('.hd-tile');if(!tile){tile=document.createElement('canvas');tile.className='hd-tile';tile.setAttribute('aria-hidden','true');frame.append(tile);}
+      tile.width=Math.max(1,Math.ceil(width*dpr));tile.height=Math.max(1,Math.ceil(height*dpr));tile.style.cssText=`left:${x}px;top:${y}px;width:${width}px;height:${height}px`;
+      const ctx=tile.getContext('2d'),ratio=Number(frame.dataset.hdRatio),start=Number(frame.dataset.hdStart)||0;
+      ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
+      ctx.drawImage(bitmap,x/ratio+(v?0:start),y/ratio+(v?start:0),width/ratio,height/ratio,0,0,tile.width,tile.height);
+    }catch(error){/* Keep the thumbnail if a source cannot be decoded. */}
+  }
+  for(const [id,entry] of [...hdBitmaps].sort((a,b)=>a[1].used-b[1].used)){
+    if(hdBitmaps.size<=3)break;if(!entry.bitmap)continue;closeBitmap(entry.bitmap);hdBitmaps.delete(id);
+  }
 }
 function renderExportThumb(plan){
   const ratio=112/plan.width,vertical=state.direction==='vertical';
@@ -58,8 +95,56 @@ function renderExportThumb(plan){
 }
 async function nextStitch(){
   if(busy||!state.ids.length)return;
+  if(!(await applyAutoBars()))return;
   setStep(2);const key=analysisKey();
   if(key!==lastAnalysisKey)await analyze();
+}
+async function chromeSample(im){
+  const bitmap=await decode(im.file);
+  try{
+    const ratio=Math.min(1,4096/im.height),height=Math.round(im.height*ratio),c=canvas(192,height),ctx=c.getContext('2d',{willReadFrequently:true});
+    ctx.imageSmoothingQuality='high';ctx.drawImage(bitmap,0,0,192,height);const rgba=ctx.getImageData(0,0,192,height).data,pixels=new Uint8Array(192*height);
+    for(let i=0;i<pixels.length;i++)pixels[i]=Math.round(rgba[i*4]*.299+rgba[i*4+1]*.587+rgba[i*4+2]*.114);
+    c.width=c.height=1;return {pixels,cross:192,length:height,ratio};
+  }finally{closeBitmap(bitmap);}
+}
+let barCancel=null;
+function detectBarSamples(samples){
+  return new Promise((resolve,reject)=>{
+    const url=URL.createObjectURL(new Blob([`const detect=${StitchCore.detectBars.toString()};self.onmessage=e=>self.postMessage(detect(e.data));`],{type:'text/javascript'}));
+    try{worker=new Worker(url);}catch(error){reject(error);return;}finally{URL.revokeObjectURL(url);}
+    const finish=()=>{worker?.terminate();worker=null;barCancel=null;};
+    barCancel=()=>{finish();reject(new Error('cancelled'));};
+    worker.onmessage=e=>{finish();resolve(e.data);};worker.onerror=()=>{finish();reject(new Error('worker'));};
+    worker.postMessage(samples,samples.map(s=>s.pixels.buffer));
+  });
+}
+async function applyAutoBars(){
+  const enabled=$('#autoBars').checked&&state.direction==='vertical';
+  const signature=JSON.stringify([state.ids,enabled]);if(state.chromeKey===signature)return true;
+  const token=++generation;
+  busy=true;render();$('#progressArea').hidden=false;$('#progressText').textContent='识别上下信息栏';$('#progress').value=0;
+  try{
+    let detected=images().map(()=>({start:0,end:0}));
+    if(enabled&&state.ids.length>=2){
+      const samples=[];for(const im of images()){samples.push(await chromeSample(im));if(token!==generation)return false;$('#progress').value=samples.length/state.ids.length*80;}
+      detected=(await detectBarSamples(samples)).map((bar,i)=>({start:Math.round(bar.start/samples[i].ratio),end:Math.round(bar.end/samples[i].ratio)}));
+      if(token!==generation)return false;
+    }
+    const ok=transaction(()=>{
+      state.trims=state.trims||{};const old=state.autoBars||{},next={},changed=new Set();
+      state.ids.forEach((id,i)=>{
+        const t=trimFor(id),previous=old[id]||{start:0,end:0},bar=detected[i];
+        const updated={start:Math.max(0,t.start-previous.start)+bar.start,end:Math.max(0,t.end-previous.end)+bar.end};
+        if(updated.start!==t.start||updated.end!==t.end)changed.add(id);
+        state.trims[id]=updated;next[id]=bar;
+      });
+      state.autoBars=next;state.chromeKey=signature;state.seams=state.seams.filter(s=>!changed.has(s.beforeId)&&!changed.has(s.afterId));syncSeams();
+    });
+    if(ok){lastAnalysisKey='';const count=detected.filter(b=>b.start||b.end).length;$('#barSummary').textContent=count?`已裁剪 ${count} 张，可在拼接页调整`:enabled?'未检测到可靠信息栏':'已保留原图信息栏';}
+    return ok;
+  }catch(error){if(error.message!=='cancelled')toast('信息栏识别未完成，请在拼接页手动裁剪');return false;}
+  finally{busy=false;$('#progressArea').hidden=true;render();}
 }
 function showImageActions(id){
   if(busy)return;selectedImageId=id;const i=state.ids.indexOf(id);
@@ -70,7 +155,8 @@ function showImageActions(id){
 function openImageCrop(){
   const im=registry.get(selectedImageId);if(!im)return;
   cropEditing={id:im.id,...trimFor(im.id),length:state.direction==='vertical'?im.height:im.width};
-  $('#cropTitle').textContent=`裁剪`;$('#cropPreview').src=im.preview;
+  if(cropOriginalUrl)URL.revokeObjectURL(cropOriginalUrl);cropOriginalUrl=URL.createObjectURL(im.file);
+  $('#cropTitle').textContent=`裁剪`;$('#cropPreview').src=cropOriginalUrl;
   const vertical=state.direction==='vertical';$('#cropFrame').classList.toggle('horizontal',!vertical);
   $('#cropStartLabel').firstChild.textContent=vertical?'顶部':'左侧';$('#cropEndLabel').firstChild.textContent=vertical?'底部':'右侧';
   $('#cropDialog').showModal();
@@ -128,14 +214,15 @@ async function importFiles(files) {
   if(errors.length)info('部分图片未导入',`<p>其余图片已保留，可继续拼接。</p><ul>${errors.map(s=>`<li>${escapeHTML(s)}</li>`).join('')}</ul>`);
 }
 function moveImage(index,delta) { if(busy||index+delta<0||index+delta>=state.ids.length)return;transaction(()=>{const j=index+delta;[state.ids[index],state.ids[j]]=[state.ids[j],state.ids[index]];syncSeams();}); }
-function changeDirection(direction) {if(busy||state.direction===direction)return;if(transaction(()=>{state.direction=direction;state.seams=[];state.trims={};state.crop={start:0,end:0};state.bars={start:0,end:0};syncSeams();}))toast('方向已切换，接缝需重新检查；可撤销恢复');}
+function changeDirection(direction) {if(busy||state.direction===direction)return;if(transaction(()=>{state.direction=direction;state.seams=[];state.trims={};state.autoBars={};state.chromeKey='';state.crop={start:0,end:0};state.bars={start:0,end:0};syncSeams();}))toast('方向已切换，接缝需重新检查；可撤销恢复');}
 async function analysisData(im, precise=false) {
   const b=await decode(im.file);
   try{
     const vertical=state.direction==='vertical', fullLength=vertical?im.height:im.width, cross=vertical?im.width:im.height;
     const trim=trimFor(im.id),start=state.bars.start+trim.start,end=state.bars.end+trim.end,length=fullLength-start-end;
     if(length<=0)throw new Error('重复栏范围超出图片');
-    const sampleCross=precise?Math.min(320,cross):72,ratio=precise?1:72/cross,c=canvas(vertical?sampleCross:Math.round(length*ratio),vertical?Math.round(length*ratio):sampleCross),ctx=c.getContext('2d',{willReadFrequently:true});
+    const sampleCross=Math.min(precise?320:128,cross),ratio=precise?1:sampleCross/cross,c=canvas(vertical?sampleCross:Math.round(length*ratio),vertical?Math.round(length*ratio):sampleCross),ctx=c.getContext('2d',{willReadFrequently:true});
+    ctx.imageSmoothingQuality='high';
     ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);
     ctx.drawImage(b,vertical?0:start,vertical?start:0,vertical?cross:length,vertical?length:cross,0,0,c.width,c.height);
     const rgba=ctx.getImageData(0,0,c.width,c.height).data,l=vertical?c.height:c.width,pixels=new Uint8Array(l*sampleCross);
@@ -181,7 +268,7 @@ async function analyze() {
     worker.postMessage({data,pairs});
   }catch(e){if(token!==generation)return;busy=false;$('#progressArea').hidden=true;render();toast(e.message||'分析失败');}
 }
-function cancelAnalysis(){generation++;worker?.terminate();worker=null;busy=false;$('#progressArea').hidden=true;render();toast('已取消，截图和编辑均保留');}
+function cancelAnalysis(){generation++;barCancel?.();worker?.terminate();worker=null;busy=false;$('#progressArea').hidden=true;render();toast('已取消，截图和编辑均保留');}
 function closeEditorResources(){editorBitmaps.forEach(closeBitmap);editorBitmaps=[];editor=null;}
 async function openSeam(index) {
   if(busy)return;const seam=state.seams[index];if(!seam)return;
@@ -301,6 +388,11 @@ async function loadDemo(){
   }finally{busy=false;render();}
 }
 function bind(){
+  $('#autoBars').onchange=()=>{if(!busy)applyAutoBars();};
+  // Lock browser zoom while retaining one-finger scrolling and crop dragging.
+  for(const type of ['gesturestart','gesturechange','gestureend'])document.addEventListener(type,e=>e.preventDefault(),{passive:false});
+  document.addEventListener('touchmove',e=>{if(e.touches.length>1)e.preventDefault();},{passive:false});
+  document.addEventListener('wheel',e=>{if(e.ctrlKey)e.preventDefault();},{passive:false});
   $('#upload').onclick=$('#add').onclick=()=>$('#fileInput').click();$('#fileInput').onchange=e=>importFiles(e.target.files);$('#demo').onclick=loadDemo;
   $('#resume').onclick=()=>{homeView=false;render();};$('#previousSelect').onclick=()=>{homeView=true;render();};$('#previousStitch').onclick=()=>{cancelInline();setStep(1);};$('#previousExport').onclick=()=>setStep(2);$('#nextStitch').onclick=nextStitch;$('#nextExport').onclick=()=>{if(inlineEdit&&!saveInline())return;openExport();};$('#back').onclick=()=>{cancelInline();setStep(Math.max(1,pageStep-1));};
   $('#vertical').onclick=()=>changeDirection('vertical');$('#horizontal').onclick=()=>changeDirection('horizontal');$('#cancel').onclick=cancelAnalysis;
@@ -336,11 +428,11 @@ function bind(){
   $('#pendingButton').onclick=()=>{const i=state.seams.findIndex(s=>!s.confirmed);if(i>=0)startInline(i);};
   $('#adjustImage').onclick=()=>{const i=state.ids.indexOf(selectedImageId);$('#imageActions').close();openSeam(i?i-1:0);};$('#cropImage').onclick=()=>{$('#imageActions').close();openImageCrop();};
   document.querySelectorAll('.close-dialog').forEach(b=>b.onclick=()=>b.closest('dialog').close());
-  $('#seamDialog').addEventListener('close',closeEditorResources);$('#cropDialog').addEventListener('close',()=>cropEditing=null);
+  $('#seamDialog').addEventListener('close',closeEditorResources);$('#cropDialog').addEventListener('close',()=>{cropEditing=null;if(cropOriginalUrl)URL.revokeObjectURL(cropOriginalUrl);cropOriginalUrl=null;$('#cropPreview').removeAttribute('src');});
   $('#overlapRange').oninput=$('#overlapNumber').oninput=e=>{if(!editor)return;editor.overlap=Number(e.target.value)||0;updateEditor();};
   $('#opacityRange').oninput=e=>{if(!editor)return;editor.opacity=Number(e.target.value)/100;$('#opacityValue').textContent=e.target.value+'%';updateEditor();};
   $('#cutRange').oninput=e=>{if(!editor)return;editor.cutRatio=Number(e.target.value)/100;$('#cutValue').textContent=e.target.value+'%';updateEditor();};
-  $('#keepBoth').onclick=()=>{if(editor){editor.overlap=0;updateEditor();}};$('#applySuggestion').onclick=()=>{if(editor){editor.overlap=editor.seam.suggested||0;updateEditor();}};$('#editorZoom').onclick=()=>{if(editor){editor.zoom=editor.zoom===1?2:1;updateEditor();}};
+  $('#keepBoth').onclick=()=>{if(editor){editor.overlap=0;updateEditor();}};$('#applySuggestion').onclick=()=>{if(editor){editor.overlap=editor.seam.suggested||0;updateEditor();}};
   let pointer=null;
   $('#editorCanvas').onpointerdown=e=>{if(!editor)return;pointer={id:e.pointerId,start:editor.vertical?e.clientY:e.clientX,overlap:editor.overlap};e.target.setPointerCapture(e.pointerId);};
   $('#editorCanvas').onpointermove=e=>{if(!pointer||!editor||pointer.id!==e.pointerId)return;editor.overlap=pointer.overlap-((editor.vertical?e.clientY:e.clientX)-pointer.start)/editor.scale;updateEditor();};$('#editorCanvas').onpointerup=$('#editorCanvas').onpointercancel=()=>pointer=null;
@@ -394,7 +486,8 @@ function renderInline(){
  e.origins=origins;const min=Math.min(0,...origins);e.shift=-min;
  const total=Math.max(...ims.map((im,i)=>origins[i]+(v?im.height:im.width)))-min;
  const track=$('#previewTrack');track.className='preview-track direct-edit'+(v?'':' horizontal');track.style.cssText=`position:relative;width:${(v?cross:total)*r}px;height:${(v?total:cross)*r}px`;
- track.innerHTML=ims.map((im,i)=>{const length=v?im.height:im.width,t=e.trims[im.id];return `<div class="source-frame source-${i%2} ${e.activeId===im.id?'active-source':''} ${e.dragging&&e.activeId===im.id?'cropping':''}" data-frame="${im.id}" style="width:${im.width*r}px;height:${im.height*r}px;--trim-start:${t.start/length*100}%;--trim-end:${t.end/length*100}%;${v?'top':'left'}:${(origins[i]-min)*r}px"><img draggable="false" src="${im.preview}" alt="原图 ${i+1}"><span class="source-number">${i+1}</span><div class="direct-shade shade-start" style="${v?'height':'width'}:${t.start*r}px"></div><div class="direct-shade shade-end" style="${v?'height':'width'}:${t.end*r}px"></div></div>`;}).join('')+ims.map((im,i)=>{const length=v?im.height:im.width,t=e.trims[im.id];return ['start','end'].map(side=>`<button class="direct-handle trim-${side} color-${i%2}" data-edge="${side}" data-source="${im.id}" style="${v?'top':'left'}:${(origins[i]-min+(side==='start'?t.start:length-t.end))*r}px" aria-label="截图 ${i+1} ${side==='start'?'起始':'末尾'}裁切边缘"><i></i></button>`).join('');}).join('')+e.seams.map((s,i)=>`<button class="join-drag" data-join="${i}" style="${v?'top':'left'}:${(origins[i+1]-min+e.trims[ims[i+1].id].start+s.overlap/2)*r}px" aria-label="拖动调整接缝 ${i+1}"><svg viewBox="0 0 24 24"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/></svg></button><button class="join-reset" data-reset="${i}" style="${v?'top':'left'}:${(origins[i+1]-min+e.trims[ims[i+1].id].start+s.overlap/2)*r+52}px" aria-label="恢复接缝 ${i+1} 自动拼接">${icon('reset')}</button>`).join('');
+ track.innerHTML=ims.map((im,i)=>{const length=v?im.height:im.width,t=e.trims[im.id];return `<div class="source-frame source-${i%2} ${e.activeId===im.id?'active-source':''} ${e.dragging&&e.activeId===im.id?'cropping':''}" data-frame="${im.id}" data-hd-source="${im.id}" data-hd-ratio="${r}" style="width:${im.width*r}px;height:${im.height*r}px;--trim-start:${t.start/length*100}%;--trim-end:${t.end/length*100}%;${v?'top':'left'}:${(origins[i]-min)*r}px"><img draggable="false" src="${im.preview}" alt="原图 ${i+1}"><span class="source-number">${i+1}</span><div class="direct-shade shade-start" style="${v?'height':'width'}:${t.start*r}px"></div><div class="direct-shade shade-end" style="${v?'height':'width'}:${t.end*r}px"></div></div>`;}).join('')+ims.map((im,i)=>{const length=v?im.height:im.width,t=e.trims[im.id];return ['start','end'].map(side=>`<button class="direct-handle trim-${side} color-${i%2}" data-edge="${side}" data-source="${im.id}" style="${v?'top':'left'}:${(origins[i]-min+(side==='start'?t.start:length-t.end))*r}px" aria-label="截图 ${i+1} ${side==='start'?'起始':'末尾'}裁切边缘"><i></i></button>`).join('');}).join('')+e.seams.map((s,i)=>`<button class="join-drag" data-join="${i}" style="${v?'top':'left'}:${(origins[i+1]-min+e.trims[ims[i+1].id].start+s.overlap/2)*r}px" aria-label="拖动调整接缝 ${i+1}"><svg viewBox="0 0 24 24"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/></svg></button><button class="join-reset" data-reset="${i}" style="${v?'top':'left'}:${(origins[i+1]-min+e.trims[ims[i+1].id].start+s.overlap/2)*r+52}px" aria-label="恢复接缝 ${i+1} 自动拼接">${icon('reset')}</button>`).join('');
+ scheduleHD();
 }
 function cancelInline(){const anchor=captureViewAnchor();inlineEdit=null;$('#inlineToolbar').hidden=true;$('#previewTrack').style.cssText='';if(pageStep===2){renderPreview();restoreViewAnchor(anchor);}}
 function saveInline(){
@@ -414,6 +507,7 @@ function bindInline(){
  $('#previewTrack').addEventListener('click',ev=>{const reset=ev.target.closest('[data-reset]');if(!reset||!inlineEdit)return;pushEditHistory();const e=inlineEdit,i=Number(reset.dataset.reset),s=e.seams[i],base=s.autoBase||{start:0,end:0};s.overlap=Math.max(0,(s.suggested||0)-(e.trims[s.beforeId].end-base.end)-(e.trims[s.afterId].start-base.start));e.touched.add(i);renderInline();});
 
  let drag=null;const viewport=$('#viewport');
+ viewport.addEventListener('scroll',scheduleHD,{passive:true});
  viewport.addEventListener('pointerdown',ev=>{const h=ev.target.closest('[data-edge],[data-join]');if(!h||!inlineEdit)return;ev.preventDefault();const v=state.direction==='vertical';pushEditHistory();inlineEdit.activeId=h.dataset.source||null;inlineEdit.dragging=!!h.dataset.edge;drag={pointer:ev.pointerId,start:v?ev.clientY:ev.clientX,edge:h.dataset.edge,id:h.dataset.source,join:Number(h.dataset.join),seams:clone(inlineEdit.seams),trims:clone(inlineEdit.trims),touched:new Set(inlineEdit.touched)};viewport.setPointerCapture(ev.pointerId);renderInline();});
  viewport.addEventListener('pointermove',ev=>{if(!drag||!inlineEdit)return;ev.preventDefault();const e=inlineEdit,v=state.direction==='vertical',delta=((v?ev.clientY:ev.clientX)-drag.start)/e.ratio;
  e.trims=clone(drag.trims);e.seams=clone(drag.seams);
